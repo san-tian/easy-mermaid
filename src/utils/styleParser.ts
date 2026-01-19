@@ -1,4 +1,4 @@
-import type { NodeStyle, EdgeInfo } from '../store/editorStore'
+import type { NodeStyle, EdgeInfo, ArrowType } from '../store/editorStore'
 
 export function formatStyleValue(styles: NodeStyle): string {
   const parts: string[] = []
@@ -98,6 +98,14 @@ export function parseEdges(code: string): EdgeInfo[] {
   // 支持: A --> B, A -->|label| B, A -.-> B, A ==> B 等
   const arrowPattern = /(\w+)\s*(-->|---->|-.->|-.--->|==>|=====>)\s*(\|([^|]*)\|)?\s*(\w+)/
 
+  // 将解析到的箭头类型映射到 ArrowType
+  const normalizeArrowType = (arrow: string): ArrowType => {
+    if (arrow === '--->' || arrow === '---->') return '--->'
+    if (arrow === '-.->' || arrow === '-.->') return '-.->'
+    if (arrow === '==>' || arrow === '=====>') return '==>'
+    return '-->'
+  }
+
   for (let i = 0; i < lines.length; i++) {
     const match = lines[i].match(arrowPattern)
     if (match) {
@@ -105,6 +113,7 @@ export function parseEdges(code: string): EdgeInfo[] {
         from: match[1],
         to: match[5],
         label: match[4] || '', // 标签可能为空
+        arrowType: normalizeArrowType(match[2]),
         lineIndex: i,
       })
     }

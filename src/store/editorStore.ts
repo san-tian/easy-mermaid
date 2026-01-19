@@ -13,6 +13,7 @@ export interface EdgeInfo {
   from: string
   to: string
   label: string
+  arrowType: ArrowType
   lineIndex: number
 }
 
@@ -47,6 +48,7 @@ interface EditorState {
   updateNodeStyle: (nodeId: string, style: Partial<NodeStyle>) => void
   getNodeStyle: (nodeId: string) => NodeStyle
   updateEdgeLabel: (edge: EdgeInfo, newLabel: string) => void
+  updateEdgeArrowType: (edge: EdgeInfo, arrowType: ArrowType) => void
   insertNode: (afterNodeId: string, newNodeId: string, newNodeLabel: string, shape?: NodeShape) => void
   updateNodeShape: (nodeId: string, shape: NodeShape) => void
   updateNodeLabel: (nodeId: string, newLabel: string) => void
@@ -219,6 +221,23 @@ export const useEditorStore = create<EditorState>()(
           const [, indent, from, space1, arrow, , space2, to] = match
           const newLabelPart = newLabel ? `|${newLabel}|` : ''
           lines[edge.lineIndex] = `${indent}${from}${space1}${arrow}${newLabelPart}${space2}${to}`
+          set({ code: lines.join('\n') })
+        }
+      },
+
+      updateEdgeArrowType: (edge: EdgeInfo, arrowType: ArrowType) => {
+        const state = get()
+        const lines = state.code.split('\n')
+        const line = lines[edge.lineIndex]
+        if (!line) return
+
+        const arrowPattern = /(\s*)(\w+)(\s*)(-->|---->|-.->|-.--->|==>|=====>)(\|[^|]*\|)?(\s*)(\w+)/
+        const match = line.match(arrowPattern)
+
+        if (match) {
+          const [, indent, from, space1, , labelPart, space2, to] = match
+          const newLabelPart = labelPart || ''
+          lines[edge.lineIndex] = `${indent}${from}${space1}${arrowType}${newLabelPart}${space2}${to}`
           set({ code: lines.join('\n') })
         }
       },

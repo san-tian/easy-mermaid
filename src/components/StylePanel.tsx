@@ -37,6 +37,7 @@ export function StylePanel() {
     setSelectedNode,
     setSelectedEdge,
     updateEdgeLabel,
+    updateEdgeArrowType,
     updateNodeShape,
     updateNodeLabel,
     insertNode,
@@ -49,6 +50,7 @@ export function StylePanel() {
 
   const [localStyle, setLocalStyle] = useState<NodeStyle>(defaultNodeStyle)
   const [edgeLabelInput, setEdgeLabelInput] = useState('')
+  const [edgeArrowType, setEdgeArrowType] = useState<ArrowType>('-->')
   const [nodeLabelInput, setNodeLabelInput] = useState('')
   const [newNodeId, setNewNodeId] = useState('')
   const [newNodeLabel, setNewNodeLabel] = useState('')
@@ -78,6 +80,7 @@ export function StylePanel() {
   useEffect(() => {
     if (selectedEdge) {
       setEdgeLabelInput(selectedEdge.label)
+      setEdgeArrowType(selectedEdge.arrowType)
     }
   }, [selectedEdge])
 
@@ -95,6 +98,13 @@ export function StylePanel() {
   const handleEdgeLabelSave = () => {
     if (selectedEdge) {
       updateEdgeLabel(selectedEdge, edgeLabelInput)
+    }
+  }
+
+  const handleEdgeArrowTypeChange = (arrowType: ArrowType) => {
+    if (selectedEdge) {
+      setEdgeArrowType(arrowType)
+      updateEdgeArrowType(selectedEdge, arrowType)
     }
   }
 
@@ -155,6 +165,21 @@ export function StylePanel() {
         </div>
 
         <div className="space-y-4">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">线条样式</label>
+            <select
+              value={edgeArrowType}
+              onChange={(e) => handleEdgeArrowTypeChange(e.target.value as ArrowType)}
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+            >
+              {ARROW_TYPES.map((arrow) => (
+                <option key={arrow.value} value={arrow.value}>
+                  {arrow.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <div>
             <label className="mb-1 block text-sm font-medium text-gray-700">标签文字</label>
             <input
