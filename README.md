@@ -1,73 +1,54 @@
-# React + TypeScript + Vite
+# Easy Mermaid - 可视化流程图编辑器
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+一个基于 Web 的 Mermaid 流程图可视化编辑器，支持实时预览、节点样式编辑和多种导出格式。
 
-Currently, two official plugins are available:
+**在线体验**: [https://san-tian.github.io/easy-mermaid/](https://san-tian.github.io/easy-mermaid/)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## 功能特性
 
-## React Compiler
+- **实时预览** - 左侧编辑 Mermaid 代码，中间实时渲染流程图
+- **可视化编辑** - 点击节点/连线直接编辑样式、标签、形状
+- **节点操作** - 添加节点、删除节点、插入连接、修改形状
+- **样式自定义** - 调整填充色、边框色、边框宽度、字体颜色
+- **多种方向** - 支持左右、右左、上下、下上四种布局方向
+- **图表模板** - 内置流程图、时序图、类图、状态图、ER图模板
+- **导出功能** - 支持导出 PNG、SVG 格式，支持复制代码
+- **缩放控制** - Ctrl + 滚轮缩放预览区域
+- **本地持久化** - 自动保存编辑内容到浏览器
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## 技术栈
 
-## Expanding the ESLint configuration
+- React 19 + TypeScript
+- Vite 7
+- Tailwind CSS v4
+- Zustand (状态管理)
+- Monaco Editor (代码编辑器)
+- Mermaid 11 (图表渲染)
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## 本地开发
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+```bash
+# 安装依赖
+npm install
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+# 启动开发服务器
+npm run dev
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+# 构建生产版本
+npm run build
+
+# 部署到 GitHub Pages
+npm run deploy
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## 使用说明
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+1. 在左侧编辑器中编写 Mermaid 语法的流程图代码
+2. 中间区域实时显示渲染结果
+3. 点击图中的节点可在右侧面板编辑样式
+4. 点击连线标签可编辑连线文字
+5. 使用顶部工具栏切换方向、添加节点、导出图片
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+## 许可证
+
+MIT
