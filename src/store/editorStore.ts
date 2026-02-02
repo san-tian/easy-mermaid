@@ -42,7 +42,9 @@ interface EditorState {
   selectedNode: string | null
   selectedEdge: EdgeInfo | null
   nodeStyles: Record<string, NodeStyle>
-  setCode: (code: string) => void
+  history: string[]
+  historyIndex: number
+  setCode: (code: string, skipHistory?: boolean) => void
   setSelectedNode: (nodeId: string | null) => void
   setSelectedEdge: (edge: EdgeInfo | null) => void
   updateNodeStyle: (nodeId: string, style: Partial<NodeStyle>) => void
@@ -60,6 +62,10 @@ interface EditorState {
   addConnection: (from: string, to: string, label?: string, arrowType?: ArrowType) => void
   deleteNode: (nodeId: string) => void
   deleteEdge: (edge: EdgeInfo) => void
+  undo: () => void
+  redo: () => void
+  canUndo: () => boolean
+  canRedo: () => boolean
 }
 
 const DEFAULT_CODE = `flowchart LR
@@ -96,17 +102,41 @@ function extractNodesWithLabels(code: string): Array<{ id: string; label: string
   const nodes: Array<{ id: string; label: string }> = []
   const seen = new Set<string>()
 
-  // 匹配节点定义 A[label], B{label}, C(label) 等
-  const nodePattern = /(\w+)([\[\(\{/<]+)([^\]\)\}>]+)([\]\)\}/>]+)/g
+  // 定义括号对应关系
+  const bracketPairs: Record<string, string> = {
+    '[': ']',
+    '(': ')',
+    '{': '}',
+    '([': '])',
+    '[(': ')]',
+    '((': '))',
+    '{{': '}}',
+    '[/': '/]',
+    '[\\': '\\]',
+    '>': ']',
+  }
+
+  // 匹配节点定义，捕获 ID 和开括号
+  const nodeStartPattern = /(\w+)(\[\[|\(\[|\[\(|\(\(|\{\{|\[\/|\[\\|>|\[|\(|\{)/g
   let match
-  while ((match = nodePattern.exec(code)) !== null) {
+  while ((match = nodeStartPattern.exec(code)) !== null) {
     const id = match[1]
-    const label = match[3]
-    if (id && !seen.has(id) && /^[A-Za-z]\w*$/.test(id) &&
-        !['flowchart', 'graph', 'subgraph', 'end', 'style', 'classDef', 'class'].includes(id.toLowerCase())) {
-      seen.add(id)
-      nodes.push({ id, label })
-    }
+    const openBracket = match[2]
+    const closeBracket = bracketPairs[openBracket]
+
+    if (!closeBracket) continue
+    if (seen.has(id)) continue
+    if (!(/^[A-Za-z]\w*$/.test(id))) continue
+    if (['flowchart', 'graph', 'subgraph', 'end', 'style', 'classDef', 'class'].includes(id.toLowerCase())) continue
+
+    // 从开括号后开始找闭括号
+    const startPos = match.index + match[0].length
+    const closePos = code.indexOf(closeBracket, startPos)
+    if (closePos === -1) continue
+
+    const label = code.slice(startPos, closePos)
+    seen.add(id)
+    nodes.push({ id, label })
   }
 
   // 添加没有标签定义的节点（只在箭头中出现）
@@ -146,6 +176,8 @@ function generateNextId(existingIds: string[]): string {
   return `N${Date.now()}`
 }
 
+const MAX_HISTORY = 50
+
 export const useEditorStore = create<EditorState>()(
   persist(
     (set, get) => ({
@@ -153,8 +185,28 @@ export const useEditorStore = create<EditorState>()(
       selectedNode: null,
       selectedEdge: null,
       nodeStyles: {},
+      history: [DEFAULT_CODE],
+      historyIndex: 0,
 
-      setCode: (code: string) => set({ code }),
+      setCode: (code: string, skipHistory = false) => {
+        const state = get()
+        if (skipHistory || code === state.code) {
+          set({ code })
+          return
+        }
+        // 截断当前位置之后的历史
+        const newHistory = state.history.slice(0, state.historyIndex + 1)
+        newHistory.push(code)
+        // 限制历史记录数量
+        if (newHistory.length > MAX_HISTORY) {
+          newHistory.shift()
+        }
+        set({
+          code,
+          history: newHistory,
+          historyIndex: newHistory.length - 1,
+        })
+      },
 
       setSelectedNode: (nodeId: string | null) => set({ selectedNode: nodeId, selectedEdge: null }),
 
@@ -296,26 +348,65 @@ export const useEditorStore = create<EditorState>()(
         const state = get()
         const lines = state.code.split('\n')
 
-        // 删除包含该节点的所有行（连接和样式）
-        const filteredLines = lines.filter(line => {
+        const processedLines: string[] = []
+        for (const line of lines) {
           const trimmed = line.trim()
-          // 保留flowchart声明行
+          // 保留 flowchart 声明行
           if (trimmed.startsWith('flowchart') || trimmed.startsWith('graph')) {
-            return true
-          }
-          // 删除该节点相关的连接
-          const connectionPattern = new RegExp(`\\b${nodeId}\\b`)
-          if (connectionPattern.test(line) && (line.includes('-->') || line.includes('-.->') || line.includes('==>'))) {
-            return false
+            processedLines.push(line)
+            continue
           }
           // 删除该节点的样式
-          if (trimmed.startsWith(`style ${nodeId}`)) {
-            return false
+          if (trimmed.startsWith(`style ${nodeId} `) || trimmed === `style ${nodeId}`) {
+            continue
           }
-          return true
-        })
 
-        set({ code: filteredLines.join('\n'), selectedNode: null })
+          const nodePattern = new RegExp(`\\b${nodeId}\\b`)
+          const hasArrow = line.includes('-->') || line.includes('-.->') || line.includes('==>')
+
+          if (nodePattern.test(line) && hasArrow) {
+            // 处理 & 并联语法: A & B & C --> D 或 A --> B & C & D
+            // 匹配箭头前后的节点组
+            const arrowMatch = line.match(/^(\s*)(.*?)\s*(-->|---->|-.->|-.--->|==>|=====>)(\|[^|]*\|)?\s*(.*)$/)
+            if (arrowMatch) {
+              const [, indent, leftPart, arrow, label, rightPart] = arrowMatch
+              const labelStr = label || ''
+
+              // 分割左右两边的节点（按 & 分割）
+              const leftNodes = leftPart.split('&').map(n => n.trim()).filter(n => n)
+              const rightNodes = rightPart.split('&').map(n => n.trim()).filter(n => n)
+
+              // 从左右两边移除目标节点
+              const newLeftNodes = leftNodes.filter(n => !new RegExp(`^${nodeId}(?:[\\[\\(\\{/<]|$)`).test(n) && n !== nodeId)
+              const newRightNodes = rightNodes.filter(n => !new RegExp(`^${nodeId}(?:[\\[\\(\\{/<]|$)`).test(n) && n !== nodeId)
+
+              // 如果两边都还有节点，保留这行
+              if (newLeftNodes.length > 0 && newRightNodes.length > 0) {
+                const newLine = `${indent}${newLeftNodes.join(' & ')} ${arrow}${labelStr} ${newRightNodes.join(' & ')}`
+                processedLines.push(newLine)
+              }
+              // 否则删除整行
+              continue
+            }
+          }
+
+          // 不包含该节点的行，保留
+          processedLines.push(line)
+        }
+
+        const newCode = processedLines.join('\n')
+        // 保存历史
+        const newHistory = state.history.slice(0, state.historyIndex + 1)
+        newHistory.push(newCode)
+        if (newHistory.length > MAX_HISTORY) {
+          newHistory.shift()
+        }
+        set({
+          code: newCode,
+          selectedNode: null,
+          history: newHistory,
+          historyIndex: newHistory.length - 1,
+        })
       },
 
       deleteEdge: (edge: EdgeInfo) => {
@@ -324,8 +415,52 @@ export const useEditorStore = create<EditorState>()(
 
         if (edge.lineIndex >= 0 && edge.lineIndex < lines.length) {
           lines.splice(edge.lineIndex, 1)
-          set({ code: lines.join('\n'), selectedEdge: null })
+          const newCode = lines.join('\n')
+          // 保存历史
+          const newHistory = state.history.slice(0, state.historyIndex + 1)
+          newHistory.push(newCode)
+          if (newHistory.length > MAX_HISTORY) {
+            newHistory.shift()
+          }
+          set({
+            code: newCode,
+            selectedEdge: null,
+            history: newHistory,
+            historyIndex: newHistory.length - 1,
+          })
         }
+      },
+
+      undo: () => {
+        const state = get()
+        if (state.historyIndex > 0) {
+          const newIndex = state.historyIndex - 1
+          set({
+            code: state.history[newIndex],
+            historyIndex: newIndex,
+          })
+        }
+      },
+
+      redo: () => {
+        const state = get()
+        if (state.historyIndex < state.history.length - 1) {
+          const newIndex = state.historyIndex + 1
+          set({
+            code: state.history[newIndex],
+            historyIndex: newIndex,
+          })
+        }
+      },
+
+      canUndo: () => {
+        const state = get()
+        return state.historyIndex > 0
+      },
+
+      canRedo: () => {
+        const state = get()
+        return state.historyIndex < state.history.length - 1
       },
 
       updateNodeShape: (nodeId: string, shape: NodeShape) => {

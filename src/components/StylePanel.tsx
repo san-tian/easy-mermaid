@@ -66,10 +66,24 @@ export function StylePanel() {
   useEffect(() => {
     if (selectedNode) {
       setLocalStyle(getNodeStyle(selectedNode))
-      const nodePattern = new RegExp(`${selectedNode}[\\[\\(\\{/<]+([^\\]\\)\\}>]+)[\\]\\)\\}/>]+`)
-      const match = code.match(nodePattern)
+      // 使用更精确的括号匹配来提取标签
+      const bracketPairs: Record<string, string> = {
+        '[': ']', '(': ')', '{': '}',
+        '([': '])', '[(': ')]', '((': '))', '{{': '}}',
+        '[/': '/]', '[\\': '\\]', '>': ']',
+      }
+      const nodeStartPattern = new RegExp(`${selectedNode}(\\[\\[|\\(\\[|\\[\\(|\\(\\(|\\{\\{|\\[\\/|\\[\\\\|>|\\[|\\(|\\{)`)
+      const match = code.match(nodeStartPattern)
       if (match) {
-        setNodeLabelInput(match[1])
+        const openBracket = match[1]
+        const closeBracket = bracketPairs[openBracket]
+        if (closeBracket) {
+          const startPos = match.index! + match[0].length
+          const closePos = code.indexOf(closeBracket, startPos)
+          if (closePos !== -1) {
+            setNodeLabelInput(code.slice(startPos, closePos))
+          }
+        }
       }
       // 设置默认的新节点ID
       setNewNodeId(getNextNodeId())
