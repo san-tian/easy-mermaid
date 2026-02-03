@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { toPng, toSvg } from 'html-to-image'
+import { toSvg } from 'html-to-image'
 import { jsPDF } from 'jspdf'
 import { useEditorStore, DEFAULT_CODE, type FlowDirection } from '../store/editorStore'
 
@@ -71,18 +71,86 @@ export function Toolbar() {
   }
 
   const handleExportPng = async (pixelRatio: number) => {
-    const svgElement = document.querySelector('.preview-container svg') as HTMLElement
+    const svgElement = document.querySelector('.preview-container svg') as SVGSVGElement
     if (!svgElement) return
 
     try {
-      const dataUrl = await toPng(svgElement, {
-        backgroundColor: '#ffffff',
-        pixelRatio,
-      })
-      const link = document.createElement('a')
-      link.download = `mermaid-diagram-${pixelRatio}x.png`
-      link.href = dataUrl
-      link.click()
+      // 克隆 SVG 以避免修改原始元素
+      const clonedSvg = svgElement.cloneNode(true) as SVGSVGElement
+
+      // 获取 SVG 的实际尺寸
+      const bbox = svgElement.getBBox()
+      const svgWidth = bbox.width + bbox.x * 2 || svgElement.clientWidth || 800
+      const svgHeight = bbox.height + bbox.y * 2 || svgElement.clientHeight || 600
+
+      // 设置 SVG 的 viewBox 和尺寸
+      clonedSvg.setAttribute('width', String(svgWidth))
+      clonedSvg.setAttribute('height', String(svgHeight))
+      if (!clonedSvg.getAttribute('viewBox')) {
+        clonedSvg.setAttribute('viewBox', `0 0 ${svgWidth} ${svgHeight}`)
+      }
+
+      // 添加白色背景
+      const bgRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+      bgRect.setAttribute('width', '100%')
+      bgRect.setAttribute('height', '100%')
+      bgRect.setAttribute('fill', '#ffffff')
+      clonedSvg.insertBefore(bgRect, clonedSvg.firstChild)
+
+      // 内联所有样式以避免跨域问题
+      const styleSheets = document.styleSheets
+      let cssText = ''
+      for (let i = 0; i < styleSheets.length; i++) {
+        try {
+          const rules = styleSheets[i].cssRules
+          for (let j = 0; j < rules.length; j++) {
+            cssText += rules[j].cssText + '\n'
+          }
+        } catch {
+          // 跨域样式表会抛出错误，忽略
+        }
+      }
+      const styleElement = document.createElementNS('http://www.w3.org/2000/svg', 'style')
+      styleElement.textContent = cssText
+      clonedSvg.insertBefore(styleElement, clonedSvg.firstChild)
+
+      // 序列化 SVG
+      const serializer = new XMLSerializer()
+      const svgString = serializer.serializeToString(clonedSvg)
+      const svgBase64 = btoa(unescape(encodeURIComponent(svgString)))
+      const svgDataUrl = `data:image/svg+xml;base64,${svgBase64}`
+
+      // 创建高分辨率 canvas
+      const canvas = document.createElement('canvas')
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+
+      const img = new Image()
+      img.onload = () => {
+        canvas.width = svgWidth * pixelRatio
+        canvas.height = svgHeight * pixelRatio
+
+        // 使用高质量缩放
+        ctx.imageSmoothingEnabled = true
+        ctx.imageSmoothingQuality = 'high'
+        ctx.fillStyle = '#ffffff'
+        ctx.fillRect(0, 0, canvas.width, canvas.height)
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+
+        canvas.toBlob((blob) => {
+          if (blob) {
+            const link = document.createElement('a')
+            link.download = `mermaid-diagram-${pixelRatio}x.png`
+            link.href = URL.createObjectURL(blob)
+            link.click()
+            URL.revokeObjectURL(link.href)
+          }
+        }, 'image/png', 1.0)
+      }
+      img.onerror = (err) => {
+        console.error('Image load failed:', err)
+      }
+      img.src = svgDataUrl
       setShowPngMenu(false)
     } catch (err) {
       console.error('Export PNG failed:', err)
@@ -90,45 +158,102 @@ export function Toolbar() {
   }
 
   const handleExportPdf = async () => {
-    const svgElement = document.querySelector('.preview-container svg') as HTMLElement
+    const svgElement = document.querySelector('.preview-container svg') as SVGSVGElement
     if (!svgElement) return
 
     try {
-      const dataUrl = await toPng(svgElement, {
-        backgroundColor: '#ffffff',
-        pixelRatio: 3,
-      })
+      // 克隆 SVG 以避免修改原始元素
+      const clonedSvg = svgElement.cloneNode(true) as SVGSVGElement
+
+      // 获取 SVG 的实际尺寸
+      const bbox = svgElement.getBBox()
+      const svgWidth = bbox.width + bbox.x * 2 || svgElement.clientWidth || 800
+      const svgHeight = bbox.height + bbox.y * 2 || svgElement.clientHeight || 600
+
+      // 设置 SVG 的 viewBox 和尺寸
+      clonedSvg.setAttribute('width', String(svgWidth))
+      clonedSvg.setAttribute('height', String(svgHeight))
+      if (!clonedSvg.getAttribute('viewBox')) {
+        clonedSvg.setAttribute('viewBox', `0 0 ${svgWidth} ${svgHeight}`)
+      }
+
+      // 添加白色背景
+      const bgRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+      bgRect.setAttribute('width', '100%')
+      bgRect.setAttribute('height', '100%')
+      bgRect.setAttribute('fill', '#ffffff')
+      clonedSvg.insertBefore(bgRect, clonedSvg.firstChild)
+
+      // 内联所有样式以避免跨域问题
+      const styleSheets = document.styleSheets
+      let cssText = ''
+      for (let i = 0; i < styleSheets.length; i++) {
+        try {
+          const rules = styleSheets[i].cssRules
+          for (let j = 0; j < rules.length; j++) {
+            cssText += rules[j].cssText + '\n'
+          }
+        } catch {
+          // 跨域样式表会抛出错误，忽略
+        }
+      }
+      const styleElement = document.createElementNS('http://www.w3.org/2000/svg', 'style')
+      styleElement.textContent = cssText
+      clonedSvg.insertBefore(styleElement, clonedSvg.firstChild)
+
+      // 序列化 SVG 为 base64 data URL
+      const serializer = new XMLSerializer()
+      const svgString = serializer.serializeToString(clonedSvg)
+      const svgBase64 = btoa(unescape(encodeURIComponent(svgString)))
+      const svgDataUrl = `data:image/svg+xml;base64,${svgBase64}`
+
+      // 使用高分辨率 (4x) 渲染
+      const pixelRatio = 4
+      const canvas = document.createElement('canvas')
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
 
       const img = new Image()
-      img.src = dataUrl
-      await new Promise((resolve) => (img.onload = resolve))
+      img.onload = () => {
+        canvas.width = svgWidth * pixelRatio
+        canvas.height = svgHeight * pixelRatio
 
-      const imgWidth = img.width
-      const imgHeight = img.height
+        ctx.imageSmoothingEnabled = true
+        ctx.imageSmoothingQuality = 'high'
+        ctx.fillStyle = '#ffffff'
+        ctx.fillRect(0, 0, canvas.width, canvas.height)
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
 
-      // 根据图片比例决定PDF方向
-      const isLandscape = imgWidth > imgHeight
-      const pdf = new jsPDF({
-        orientation: isLandscape ? 'landscape' : 'portrait',
-        unit: 'pt',
-      })
+        const dataUrl = canvas.toDataURL('image/png', 1.0)
 
-      const pageWidth = pdf.internal.pageSize.getWidth()
-      const pageHeight = pdf.internal.pageSize.getHeight()
-      const margin = 40
+        // 根据图片比例决定PDF方向
+        const isLandscape = svgWidth > svgHeight
+        const pdf = new jsPDF({
+          orientation: isLandscape ? 'landscape' : 'portrait',
+          unit: 'pt',
+        })
 
-      // 计算缩放比例，使图片适应页面
-      const maxWidth = pageWidth - margin * 2
-      const maxHeight = pageHeight - margin * 2
-      const scale = Math.min(maxWidth / imgWidth, maxHeight / imgHeight)
+        const pageWidth = pdf.internal.pageSize.getWidth()
+        const pageHeight = pdf.internal.pageSize.getHeight()
+        const margin = 40
 
-      const finalWidth = imgWidth * scale
-      const finalHeight = imgHeight * scale
-      const x = (pageWidth - finalWidth) / 2
-      const y = (pageHeight - finalHeight) / 2
+        // 计算缩放比例，使图片适应页面
+        const maxWidth = pageWidth - margin * 2
+        const maxHeight = pageHeight - margin * 2
+        const scale = Math.min(maxWidth / svgWidth, maxHeight / svgHeight)
 
-      pdf.addImage(dataUrl, 'PNG', x, y, finalWidth, finalHeight)
-      pdf.save('mermaid-diagram.pdf')
+        const finalWidth = svgWidth * scale
+        const finalHeight = svgHeight * scale
+        const x = (pageWidth - finalWidth) / 2
+        const y = (pageHeight - finalHeight) / 2
+
+        pdf.addImage(dataUrl, 'PNG', x, y, finalWidth, finalHeight)
+        pdf.save('mermaid-diagram.pdf')
+      }
+      img.onerror = (err) => {
+        console.error('PDF image load failed:', err)
+      }
+      img.src = svgDataUrl
     } catch (err) {
       console.error('Export PDF failed:', err)
     }

@@ -28,6 +28,21 @@ export interface ParsedNode {
   lineIndex: number
 }
 
+export interface SubgraphInfo {
+  id: string
+  title: string
+  nodes: string[]
+  lineStart: number
+  lineEnd: number
+}
+
+export interface SubgraphStyle {
+  fill: string
+  stroke: string
+  strokeWidth: number
+  color: string
+}
+
 // Mermaid default theme colors
 const defaultNodeStyle: NodeStyle = {
   fill: '#ECECFF',
@@ -41,14 +56,19 @@ interface EditorState {
   code: string
   selectedNode: string | null
   selectedEdge: EdgeInfo | null
+  selectedSubgraph: SubgraphInfo | null
   nodeStyles: Record<string, NodeStyle>
+  subgraphStyles: Record<string, SubgraphStyle>
   history: string[]
   historyIndex: number
   setCode: (code: string, skipHistory?: boolean) => void
   setSelectedNode: (nodeId: string | null) => void
   setSelectedEdge: (edge: EdgeInfo | null) => void
+  setSelectedSubgraph: (subgraph: SubgraphInfo | null) => void
   updateNodeStyle: (nodeId: string, style: Partial<NodeStyle>) => void
   getNodeStyle: (nodeId: string) => NodeStyle
+  updateSubgraphStyle: (subgraphId: string, style: Partial<SubgraphStyle>) => void
+  getSubgraphStyle: (subgraphId: string) => SubgraphStyle
   updateEdgeLabel: (edge: EdgeInfo, newLabel: string) => void
   updateEdgeArrowType: (edge: EdgeInfo, arrowType: ArrowType) => void
   insertNode: (afterNodeId: string, newNodeId: string, newNodeLabel: string, shape?: NodeShape) => void
@@ -66,6 +86,13 @@ interface EditorState {
   redo: () => void
   canUndo: () => boolean
   canRedo: () => boolean
+  parseSubgraphs: () => SubgraphInfo[]
+  insertSubgraph: (id: string, title: string, nodeIds?: string[]) => void
+  updateSubgraphTitle: (subgraphId: string, newTitle: string) => void
+  deleteSubgraph: (subgraphId: string) => void
+  addNodeToSubgraph: (subgraphId: string, nodeId: string) => void
+  removeNodeFromSubgraph: (subgraphId: string, nodeId: string) => void
+  duplicateNode: (nodeId: string) => string | null
 }
 
 const DEFAULT_CODE = `flowchart LR
@@ -184,7 +211,9 @@ export const useEditorStore = create<EditorState>()(
       code: DEFAULT_CODE,
       selectedNode: null,
       selectedEdge: null,
+      selectedSubgraph: null,
       nodeStyles: {},
+      subgraphStyles: {},
       history: [DEFAULT_CODE],
       historyIndex: 0,
 
@@ -208,9 +237,11 @@ export const useEditorStore = create<EditorState>()(
         })
       },
 
-      setSelectedNode: (nodeId: string | null) => set({ selectedNode: nodeId, selectedEdge: null }),
+      setSelectedNode: (nodeId: string | null) => set({ selectedNode: nodeId, selectedEdge: null, selectedSubgraph: null }),
 
-      setSelectedEdge: (edge: EdgeInfo | null) => set({ selectedEdge: edge, selectedNode: null }),
+      setSelectedEdge: (edge: EdgeInfo | null) => set({ selectedEdge: edge, selectedNode: null, selectedSubgraph: null }),
+
+      setSelectedSubgraph: (subgraph: SubgraphInfo | null) => set({ selectedSubgraph: subgraph, selectedNode: null, selectedEdge: null }),
 
       updateNodeStyle: (nodeId: string, style: Partial<NodeStyle>) =>
         set((state) => ({
@@ -227,6 +258,35 @@ export const useEditorStore = create<EditorState>()(
       getNodeStyle: (nodeId: string) => {
         const state = get()
         return state.nodeStyles[nodeId] || defaultNodeStyle
+      },
+
+      getSubgraphStyle: (subgraphId: string) => {
+        const state = get()
+        return state.subgraphStyles[subgraphId] || { fill: '#f5f5f5', stroke: '#333333', strokeWidth: 1, color: '#333333' }
+      },
+
+      updateSubgraphStyle: (subgraphId: string, style: Partial<SubgraphStyle>) => {
+        const state = get()
+        const currentStyle = state.subgraphStyles[subgraphId] || { fill: '#f5f5f5', stroke: '#333333', strokeWidth: 1, color: '#333333' }
+        const newStyle = { ...currentStyle, ...style }
+
+        // 更新 subgraphStyles
+        set({ subgraphStyles: { ...state.subgraphStyles, [subgraphId]: newStyle } })
+
+        // 更新代码中的 style 语句
+        const lines = state.code.split('\n')
+        const styleRegex = new RegExp(`^\\s*style\\s+${subgraphId}\\s+`)
+        const styleLineIndex = lines.findIndex(line => styleRegex.test(line))
+        const styleStr = `    style ${subgraphId} fill:${newStyle.fill},stroke:${newStyle.stroke},stroke-width:${newStyle.strokeWidth}px,color:${newStyle.color}`
+
+        if (styleLineIndex >= 0) {
+          lines[styleLineIndex] = styleStr
+        } else {
+          // 在文件末尾添加 style
+          lines.push(styleStr)
+        }
+
+        state.setCode(lines.join('\n'))
       },
 
       getNextNodeId: () => {
@@ -310,17 +370,51 @@ export const useEditorStore = create<EditorState>()(
 
         const [open, close] = shapeWrappers[shape]
 
+        // 检查 afterNodeId 是否在某个 subgraph 中
+        const subgraphs = get().parseSubgraphs()
+        let targetSubgraph: SubgraphInfo | null = null
+        for (const sg of subgraphs) {
+          if (sg.nodes.includes(afterNodeId)) {
+            targetSubgraph = sg
+            break
+          }
+        }
+
+        // 找到插入位置
         let insertIndex = -1
-        for (let i = 0; i < lines.length; i++) {
-          if (lines[i].includes(afterNodeId)) {
-            insertIndex = i + 1
+        if (targetSubgraph) {
+          // 在 subgraph 内部，afterNodeId 所在行之后插入
+          for (let i = targetSubgraph.lineStart + 1; i < targetSubgraph.lineEnd; i++) {
+            if (lines[i].includes(afterNodeId)) {
+              insertIndex = i + 1
+            }
+          }
+          // 如果没找到，插入到 subgraph 的 end 之前
+          if (insertIndex === -1) {
+            insertIndex = targetSubgraph.lineEnd
+          }
+        } else {
+          // 不在 subgraph 中，找到 afterNodeId 所在行之后
+          for (let i = 0; i < lines.length; i++) {
+            if (lines[i].includes(afterNodeId)) {
+              insertIndex = i + 1
+            }
           }
         }
 
         if (insertIndex > 0) {
           const newLine = `    ${afterNodeId} --> ${newNodeId}${open}${newNodeLabel}${close}`
           lines.splice(insertIndex, 0, newLine)
-          set({ code: lines.join('\n') })
+
+          // 复制 afterNodeId 的样式到新节点
+          const styleRegex = new RegExp(`^\\s*style\\s+${afterNodeId}\\s+(.+)$`, 'm')
+          const styleMatch = state.code.match(styleRegex)
+          if (styleMatch) {
+            // 在末尾添加新节点的样式
+            lines.push(`    style ${newNodeId} ${styleMatch[1]}`)
+          }
+
+          get().setCode(lines.join('\n'))
         }
       },
 
@@ -564,6 +658,339 @@ export const useEditorStore = create<EditorState>()(
         }
 
         set({ code: lines.join('\n') })
+      },
+
+      parseSubgraphs: () => {
+        const state = get()
+        const lines = state.code.split('\n')
+        const subgraphs: SubgraphInfo[] = []
+        const stack: { id: string; title: string; lineStart: number; nodes: string[] }[] = []
+
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i]
+          const trimmed = line.trim()
+
+          // Match subgraph declaration: subgraph id [title] or subgraph id
+          const subgraphMatch = trimmed.match(/^subgraph\s+(\w+)(?:\s*\[([^\]]*)\])?/)
+          if (subgraphMatch) {
+            const id = subgraphMatch[1]
+            const title = subgraphMatch[2] || id
+            stack.push({ id, title, lineStart: i, nodes: [] })
+            continue
+          }
+
+          // Match end keyword
+          if (trimmed === 'end' && stack.length > 0) {
+            const current = stack.pop()!
+            subgraphs.push({
+              id: current.id,
+              title: current.title,
+              nodes: current.nodes,
+              lineStart: current.lineStart,
+              lineEnd: i,
+            })
+            continue
+          }
+
+          // If inside a subgraph, collect node IDs
+          if (stack.length > 0) {
+            // Match node definitions or references
+            const nodePattern = /\b([A-Za-z]\w*)(?:[[({<]|(?:\s*-->|\s*-.->|\s*==>))/g
+            let match
+            while ((match = nodePattern.exec(trimmed)) !== null) {
+              const nodeId = match[1]
+              if (!['flowchart', 'graph', 'subgraph', 'end', 'style', 'classDef', 'class'].includes(nodeId.toLowerCase())) {
+                if (!stack[stack.length - 1].nodes.includes(nodeId)) {
+                  stack[stack.length - 1].nodes.push(nodeId)
+                }
+              }
+            }
+            // Also match standalone node IDs (just referenced, no definition)
+            const standalonePattern = /^\s*(\w+)\s*$/
+            const standaloneMatch = trimmed.match(standalonePattern)
+            if (standaloneMatch) {
+              const nodeId = standaloneMatch[1]
+              if (!['flowchart', 'graph', 'subgraph', 'end', 'style', 'classDef', 'class'].includes(nodeId.toLowerCase())) {
+                if (!stack[stack.length - 1].nodes.includes(nodeId)) {
+                  stack[stack.length - 1].nodes.push(nodeId)
+                }
+              }
+            }
+          }
+        }
+
+        return subgraphs
+      },
+
+      insertSubgraph: (id: string, title: string, nodeIds?: string[]) => {
+        const state = get()
+        const lines = state.code.split('\n')
+
+        // Find insertion point (before the last non-empty line or at end)
+        let insertIndex = lines.length
+        for (let i = lines.length - 1; i >= 0; i--) {
+          if (lines[i].trim()) {
+            insertIndex = i + 1
+            break
+          }
+        }
+
+        const subgraphLines: string[] = []
+        subgraphLines.push(`    subgraph ${id} [${title}]`)
+
+        if (nodeIds && nodeIds.length > 0) {
+          // Move node definitions into subgraph
+          const nodesToMove: string[] = []
+          for (const nodeId of nodeIds) {
+            // Find and extract node definition
+            const nodePattern = new RegExp(`^(\\s*)(${nodeId})([\\[\\(\\{/<]+[^\\]\\)\\}>]+[\\]\\)\\}/>]+)(.*)$`)
+            for (let i = 0; i < lines.length; i++) {
+              const match = lines[i].match(nodePattern)
+              if (match) {
+                nodesToMove.push(`        ${nodeId}${match[3]}`)
+                break
+              }
+            }
+            // If no definition found, just add the ID
+            if (!nodesToMove.find(n => n.includes(nodeId))) {
+              nodesToMove.push(`        ${nodeId}`)
+            }
+          }
+          subgraphLines.push(...nodesToMove)
+        }
+
+        subgraphLines.push('    end')
+
+        lines.splice(insertIndex, 0, ...subgraphLines)
+        get().setCode(lines.join('\n'))
+      },
+
+      updateSubgraphTitle: (subgraphId: string, newTitle: string) => {
+        const state = get()
+        const lines = state.code.split('\n')
+
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i]
+          const match = line.match(/^(\s*)subgraph\s+(\w+)(?:\s*\[([^\]]*)\])?/)
+          if (match && match[2] === subgraphId) {
+            const indent = match[1]
+            lines[i] = `${indent}subgraph ${subgraphId} [${newTitle}]`
+            get().setCode(lines.join('\n'))
+            return
+          }
+        }
+      },
+
+      deleteSubgraph: (subgraphId: string) => {
+        const state = get()
+        const subgraphs = get().parseSubgraphs()
+        const subgraph = subgraphs.find(s => s.id === subgraphId)
+        if (!subgraph) return
+
+        const lines = state.code.split('\n')
+
+        // Extract content lines (between subgraph and end)
+        const contentLines: string[] = []
+        for (let i = subgraph.lineStart + 1; i < subgraph.lineEnd; i++) {
+          const line = lines[i]
+          // Reduce indentation by 4 spaces
+          const dedented = line.startsWith('        ') ? line.slice(4) : line
+          contentLines.push(dedented)
+        }
+
+        // Remove subgraph block and insert content at the same position
+        const newLines = [
+          ...lines.slice(0, subgraph.lineStart),
+          ...contentLines,
+          ...lines.slice(subgraph.lineEnd + 1),
+        ]
+
+        get().setCode(newLines.join('\n'))
+        set({ selectedSubgraph: null })
+      },
+
+      addNodeToSubgraph: (subgraphId: string, nodeId: string) => {
+        const state = get()
+        const subgraphs = get().parseSubgraphs()
+        const subgraph = subgraphs.find(s => s.id === subgraphId)
+        if (!subgraph) return
+
+        const lines = state.code.split('\n')
+
+        // Find node definition line
+        const nodePattern = new RegExp(`^(\\s*)(${nodeId})([\\[\\(\\{/<]+[^\\]\\)\\}>]+[\\]\\)\\}/>]+)`)
+        let nodeDefLine: string | null = null
+        let nodeDefIndex = -1
+
+        for (let i = 0; i < lines.length; i++) {
+          // Skip if already inside this subgraph
+          if (i > subgraph.lineStart && i < subgraph.lineEnd) continue
+
+          const match = lines[i].match(nodePattern)
+          if (match) {
+            nodeDefLine = `        ${nodeId}${match[3]}`
+            nodeDefIndex = i
+            break
+          }
+        }
+
+        // If no definition found, just add the ID
+        if (!nodeDefLine) {
+          nodeDefLine = `        ${nodeId}`
+        }
+
+        // Insert node into subgraph (before 'end')
+        const insertIndex = subgraph.lineEnd
+
+        // Remove original definition if found and outside subgraph
+        if (nodeDefIndex >= 0 && (nodeDefIndex < subgraph.lineStart || nodeDefIndex > subgraph.lineEnd)) {
+          // Check if the line only contains this node definition
+          const fullLine = lines[nodeDefIndex].trim()
+          const isOnlyNodeDef = fullLine.match(new RegExp(`^${nodeId}[\\[\\(\\{/<]+[^\\]\\)\\}>]+[\\]\\)\\}/>]+$`))
+
+          if (isOnlyNodeDef) {
+            lines.splice(nodeDefIndex, 1)
+            // Adjust insert index if needed
+            const adjustedInsertIndex = nodeDefIndex < insertIndex ? insertIndex - 1 : insertIndex
+            lines.splice(adjustedInsertIndex, 0, nodeDefLine)
+          } else {
+            // Node is part of an edge, just add reference to subgraph
+            lines.splice(insertIndex, 0, nodeDefLine)
+          }
+        } else {
+          lines.splice(insertIndex, 0, nodeDefLine)
+        }
+
+        get().setCode(lines.join('\n'))
+      },
+
+      removeNodeFromSubgraph: (subgraphId: string, nodeId: string) => {
+        const state = get()
+        const subgraphs = get().parseSubgraphs()
+        const subgraph = subgraphs.find(s => s.id === subgraphId)
+        if (!subgraph) return
+
+        const lines = state.code.split('\n')
+
+        // Find and remove node from subgraph
+        let removedLine: string | null = null
+        for (let i = subgraph.lineStart + 1; i < subgraph.lineEnd; i++) {
+          const line = lines[i]
+          const nodePattern = new RegExp(`^\\s*${nodeId}(?:[\\[\\(\\{/<]|\\s*$)`)
+          if (nodePattern.test(line)) {
+            removedLine = line.trim()
+            lines.splice(i, 1)
+            break
+          }
+        }
+
+        // Add the node definition after the subgraph block
+        if (removedLine) {
+          // Find the new end position (after removal, lineEnd shifted)
+          const newSubgraphs = get().parseSubgraphs()
+          const newSubgraph = newSubgraphs.find(s => s.id === subgraphId)
+          const insertPos = newSubgraph ? newSubgraph.lineEnd + 1 : subgraph.lineEnd
+          lines.splice(insertPos, 0, `    ${removedLine.replace(/^\s+/, '')}`)
+        }
+
+        get().setCode(lines.join('\n'))
+      },
+
+      duplicateNode: (nodeId: string) => {
+        const state = get()
+        const code = state.code
+        const lines = code.split('\n')
+
+        // 生成新节点 ID
+        const newNodeId = get().getNextNodeId()
+
+        // 查找原节点的定义（标签和形状）
+        const bracketPairs: Record<string, string> = {
+          '[': ']', '(': ')', '{': '}',
+          '([': '])', '[(': ')]', '((': '))', '{{': '}}',
+          '[/': '/]', '[\\': '\\]', '>': ']',
+        }
+        const nodeStartPattern = new RegExp(`${nodeId}(\\[\\[|\\(\\[|\\[\\(|\\(\\(|\\{\\{|\\[\\/|\\[\\\\|>|\\[|\\(|\\{)`)
+        const match = code.match(nodeStartPattern)
+
+        if (!match) return null
+
+        const openBracket = match[1]
+        const closeBracket = bracketPairs[openBracket]
+        if (!closeBracket) return null
+
+        const startPos = match.index! + match[0].length
+        const closePos = code.indexOf(closeBracket, startPos)
+        if (closePos === -1) return null
+
+        const label = code.slice(startPos, closePos)
+
+        // 查找所有指向该节点的边（入边）和从该节点出发的边（出边）
+        const inEdges: Array<{ from: string; label: string; arrowType: string; lineIndex: number }> = []
+        const outEdges: Array<{ to: string; label: string; arrowType: string; lineIndex: number }> = []
+
+        const arrowPattern = /(\w+)\s*(-->|---->|--->|-.->|-.--->|==>|=====>)\s*(\|([^|]*)\|)?\s*(\w+)/g
+
+        for (let i = 0; i < lines.length; i++) {
+          let edgeMatch
+          const lineArrowPattern = new RegExp(arrowPattern.source, 'g')
+          while ((edgeMatch = lineArrowPattern.exec(lines[i])) !== null) {
+            const from = edgeMatch[1]
+            const arrow = edgeMatch[2]
+            const edgeLabel = edgeMatch[4] || ''
+            const to = edgeMatch[5]
+
+            if (to === nodeId) {
+              inEdges.push({ from, label: edgeLabel, arrowType: arrow, lineIndex: i })
+            }
+            if (from === nodeId) {
+              outEdges.push({ to, label: edgeLabel, arrowType: arrow, lineIndex: i })
+            }
+          }
+        }
+
+        // 找到插入位置（在原节点相关行之后）
+        let insertIndex = lines.length - 1
+        for (let i = lines.length - 1; i >= 0; i--) {
+          if (lines[i].includes(nodeId)) {
+            insertIndex = i + 1
+            break
+          }
+        }
+
+        // 构建新节点定义和连接
+        const newLines: string[] = []
+
+        // 为每个入边的源节点添加到新节点的连接
+        for (const edge of inEdges) {
+          const labelPart = edge.label ? `|${edge.label}|` : ''
+          newLines.push(`    ${edge.from} ${edge.arrowType}${labelPart} ${newNodeId}${openBracket}${label}${closeBracket}`)
+        }
+
+        // 如果没有入边，只添加节点定义
+        if (inEdges.length === 0) {
+          newLines.push(`    ${newNodeId}${openBracket}${label}${closeBracket}`)
+        }
+
+        // 为每个出边添加新节点到目标节点的连接
+        for (const edge of outEdges) {
+          const labelPart = edge.label ? `|${edge.label}|` : ''
+          // 避免重复定义节点
+          newLines.push(`    ${newNodeId} ${edge.arrowType}${labelPart} ${edge.to}`)
+        }
+
+        // 插入新行
+        lines.splice(insertIndex, 0, ...newLines)
+
+        // 复制样式
+        const styleRegex = new RegExp(`^\\s*style\\s+${nodeId}\\s+(.+)$`, 'm')
+        const styleMatch = code.match(styleRegex)
+        if (styleMatch) {
+          lines.push(`    style ${newNodeId} ${styleMatch[1]}`)
+        }
+
+        get().setCode(lines.join('\n'))
+        return newNodeId
       },
     }),
     {

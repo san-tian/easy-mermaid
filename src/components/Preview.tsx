@@ -1,26 +1,30 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { useEditorStore, type EdgeInfo } from '../store/editorStore'
+import { useEditorStore, type EdgeInfo, type SubgraphInfo } from '../store/editorStore'
 import { renderMermaid } from '../utils/mermaid'
 import { extractNodeIdFromSvg, parseEdges } from '../utils/styleParser'
 
 export function Preview() {
-  const { code, selectedNode, selectedEdge, setSelectedNode, setSelectedEdge } = useEditorStore()
+  const { code, selectedNode, selectedEdge, selectedSubgraph, setSelectedNode, setSelectedEdge, setSelectedSubgraph, parseSubgraphs } = useEditorStore()
   const containerRef = useRef<HTMLDivElement>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
   const [error, setError] = useState<string | null>(null)
   const [renderKey, setRenderKey] = useState(0)
   const edgesRef = useRef<EdgeInfo[]>([])
+  const subgraphsRef = useRef<SubgraphInfo[]>([])
 
-  // 缩放状态
+  // 缩放和平移状态
   const [scale, setScale] = useState(1)
-  const [svgSize, setSvgSize] = useState<{ width: number; height: number } | null>(null)
-  const MIN_SCALE = 0.25
-  const MAX_SCALE = 3
+  const [position, setPosition] = useState({ x: 0, y: 0 })
+  const [isDragging, setIsDragging] = useState(false)
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
+  const MIN_SCALE = 0.1
+  const MAX_SCALE = 10
 
   // 解析边信息
   useEffect(() => {
     edgesRef.current = parseEdges(code)
-  }, [code])
+    subgraphsRef.current = parseSubgraphs()
+  }, [code, parseSubgraphs])
 
   const handleNodeClick = useCallback(
     (event: MouseEvent) => {
@@ -90,6 +94,59 @@ export function Preview() {
     [setSelectedEdge, findEdgeByElement]
   )
 
+  const findSubgraphByElement = useCallback((element: Element): SubgraphInfo | null => {
+    const cluster = element.closest('.cluster')
+    if (!cluster) return null
+
+    const clusterId = cluster.getAttribute('id') || ''
+    // Mermaid generates cluster IDs like "flowchart-subgraphId-xxx"
+    for (const subgraph of subgraphsRef.current) {
+      if (clusterId.includes(subgraph.id)) {
+        return subgraph
+      }
+    }
+    return null
+  }, [])
+
+  const handleSubgraphClick = useCallback(
+    (event: MouseEvent) => {
+      event.stopPropagation()
+      const target = event.target as Element
+      const subgraph = findSubgraphByElement(target)
+      if (subgraph) {
+        setSelectedSubgraph(subgraph)
+      }
+    },
+    [setSelectedSubgraph, findSubgraphByElement]
+  )
+
+  // 拖动处理
+  const dragStartPos = useRef({ x: 0, y: 0 })
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button === 0) {
+      setIsDragging(true)
+      setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y })
+      dragStartPos.current = { x: e.clientX, y: e.clientY }
+    }
+  }
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging) return
+    setPosition({
+      x: e.clientX - dragStart.x,
+      y: e.clientY - dragStart.y
+    })
+  }
+
+  const handleMouseUp = () => {
+    setIsDragging(false)
+  }
+
+  const handleMouseLeave = () => {
+    setIsDragging(false)
+  }
+
   // 滚轮缩放
   const handleWheel = useCallback(
     (e: WheelEvent) => {
@@ -126,12 +183,6 @@ export function Preview() {
           svgElement.style.maxWidth = 'none'
           svgElement.style.height = 'auto'
 
-          // 获取 SVG 实际尺寸用于缩放滚动区域计算
-          const bbox = svgElement.getBBox()
-          const width = bbox.width + bbox.x * 2 + 40 // 加上边距
-          const height = bbox.height + bbox.y * 2 + 40
-          setSvgSize({ width, height })
-
           const nodes = svgElement.querySelectorAll('.node')
           nodes.forEach((node) => {
             ;(node as HTMLElement).style.cursor = 'pointer'
@@ -156,6 +207,13 @@ export function Preview() {
             }
             path.addEventListener('click', handleEdgeClick as EventListener)
           })
+
+          // Add click handlers for subgraphs (clusters)
+          const clusters = svgElement.querySelectorAll('.cluster')
+          clusters.forEach((cluster) => {
+            ;(cluster as HTMLElement).style.cursor = 'pointer'
+            cluster.addEventListener('click', handleSubgraphClick as EventListener)
+          })
         }
 
         setRenderKey((k) => k + 1)
@@ -166,7 +224,7 @@ export function Preview() {
 
     const debounce = setTimeout(render, 300)
     return () => clearTimeout(debounce)
-  }, [code, handleNodeClick, handleEdgeClick])
+  }, [code, handleNodeClick, handleEdgeClick, handleSubgraphClick])
 
   useEffect(() => {
     const container = containerRef.current
@@ -213,24 +271,51 @@ export function Preview() {
         ;(label as HTMLElement).style.outline = 'none'
       }
     })
-  }, [selectedNode, selectedEdge, renderKey])
+
+    // Highlight selected subgraph
+    const clusters = container.querySelectorAll('.cluster')
+    clusters.forEach((cluster) => {
+      const clusterId = cluster.getAttribute('id') || ''
+      const isSelected = selectedSubgraph && clusterId.includes(selectedSubgraph.id)
+      const clusterRect = cluster.querySelector('rect') as SVGRectElement | null
+
+      if (clusterRect) {
+        if (isSelected) {
+          clusterRect.style.outline = '3px solid #3b82f6'
+          clusterRect.style.outlineOffset = '2px'
+        } else {
+          clusterRect.style.outline = 'none'
+        }
+      }
+    })
+  }, [selectedNode, selectedEdge, selectedSubgraph, renderKey])
 
   const handleContainerClick = (e: React.MouseEvent) => {
+    // 如果拖动距离超过 5px，视为拖动而非点击
+    const dx = Math.abs(e.clientX - dragStartPos.current.x)
+    const dy = Math.abs(e.clientY - dragStartPos.current.y)
+    if (dx > 5 || dy > 5) return
+
     const target = e.target as Element
     if (
       !target.closest('.node') &&
       !target.closest('.edgeLabel') &&
       !target.closest('.edgePath') &&
-      !target.closest('.flowchart-link')
+      !target.closest('.flowchart-link') &&
+      !target.closest('.cluster')
     ) {
       setSelectedNode(null)
       setSelectedEdge(null)
+      setSelectedSubgraph(null)
     }
   }
 
   const zoomIn = () => setScale((prev) => Math.min(MAX_SCALE, prev + 0.25))
   const zoomOut = () => setScale((prev) => Math.max(MIN_SCALE, prev - 0.25))
-  const resetZoom = () => setScale(1)
+  const resetZoom = () => {
+    setScale(1)
+    setPosition({ x: 0, y: 0 })
+  }
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-gray-50">
@@ -262,7 +347,12 @@ export function Preview() {
       {/* 预览区域 */}
       <div
         ref={wrapperRef}
-        className="h-full w-full overflow-auto p-4"
+        className="h-full w-full overflow-hidden p-4"
+        style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseLeave}
       >
         {error ? (
           <div className="rounded-lg bg-red-50 p-4 text-red-600">
@@ -273,13 +363,12 @@ export function Preview() {
           <div
             className="inline-block"
             style={{
-              minWidth: svgSize ? svgSize.width * scale : 'auto',
-              minHeight: svgSize ? svgSize.height * scale : 'auto',
+              transform: `translate(${position.x}px, ${position.y}px)`,
             }}
           >
             <div
               ref={containerRef}
-              className="origin-top-left transition-transform duration-100"
+              className="origin-top-left"
               style={{ transform: `scale(${scale})` }}
               onClick={handleContainerClick}
             />
@@ -289,7 +378,7 @@ export function Preview() {
 
       {/* 缩放提示 */}
       <div className="absolute bottom-2 right-2 text-xs text-gray-400">
-        Ctrl + 滚轮缩放
+        拖动平移 · Ctrl + 滚轮缩放
       </div>
     </div>
   )
