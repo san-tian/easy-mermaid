@@ -79,7 +79,7 @@ function extractNodeIds(code: string): string[] {
   const ids = new Set<string>()
   // 匹配节点定义和引用
   const patterns = [
-    /(\w+)[\[\(\{<]/g,  // 节点定义
+    /(\w+)[[({<]/g,  // 节点定义
     /--[>-].*?(\w+)/g,  // 箭头后的节点
     /(\w+)\s*--/g,      // 箭头前的节点
   ]
@@ -348,11 +348,39 @@ export const useEditorStore = create<EditorState>()(
         const state = get()
         const lines = state.code.split('\n')
 
+        // 先收集所有节点的定义位置（哪些行定义了哪些节点的标签）
+        const nodeDefinitions: Map<string, { lineIndex: number; definition: string }[]> = new Map()
+        const defPattern = /(\w+)([[({<][[({}]?)(.*?)([\])}>][\])}>]?)/g
+
+        lines.forEach((line, lineIndex) => {
+          let match
+          const lineCopy = line
+          defPattern.lastIndex = 0
+          while ((match = defPattern.exec(lineCopy)) !== null) {
+            const nid = match[1]
+            if (['flowchart', 'graph', 'subgraph', 'end', 'style', 'classDef', 'class'].includes(nid.toLowerCase())) continue
+            const fullDef = `${nid}${match[2]}${match[3]}${match[4]}`
+            if (!nodeDefinitions.has(nid)) {
+              nodeDefinitions.set(nid, [])
+            }
+            nodeDefinitions.get(nid)!.push({ lineIndex, definition: fullDef })
+          }
+        })
+
         const processedLines: string[] = []
-        for (const line of lines) {
+        const orphanedDefinitions: string[] = [] // 需要单独保留的节点定义
+
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i]
           const trimmed = line.trim()
+
           // 保留 flowchart 声明行
           if (trimmed.startsWith('flowchart') || trimmed.startsWith('graph')) {
+            processedLines.push(line)
+            continue
+          }
+          // 保留 subgraph 相关
+          if (trimmed.startsWith('subgraph') || trimmed === 'end') {
             processedLines.push(line)
             continue
           }
@@ -365,37 +393,65 @@ export const useEditorStore = create<EditorState>()(
           const hasArrow = line.includes('-->') || line.includes('-.->') || line.includes('==>')
 
           if (nodePattern.test(line) && hasArrow) {
-            // 处理 & 并联语法: A & B & C --> D 或 A --> B & C & D
-            // 匹配箭头前后的节点组
+            // 处理 & 并联语法
             const arrowMatch = line.match(/^(\s*)(.*?)\s*(-->|---->|-.->|-.--->|==>|=====>)(\|[^|]*\|)?\s*(.*)$/)
             if (arrowMatch) {
               const [, indent, leftPart, arrow, label, rightPart] = arrowMatch
               const labelStr = label || ''
 
-              // 分割左右两边的节点（按 & 分割）
               const leftNodes = leftPart.split('&').map(n => n.trim()).filter(n => n)
               const rightNodes = rightPart.split('&').map(n => n.trim()).filter(n => n)
 
-              // 从左右两边移除目标节点
               const newLeftNodes = leftNodes.filter(n => !new RegExp(`^${nodeId}(?:[\\[\\(\\{/<]|$)`).test(n) && n !== nodeId)
               const newRightNodes = rightNodes.filter(n => !new RegExp(`^${nodeId}(?:[\\[\\(\\{/<]|$)`).test(n) && n !== nodeId)
 
-              // 如果两边都还有节点，保留这行
+              // 检查被移除的边中，是否有节点的唯一定义在此行
+              const checkOrphanedNodes = (nodes: string[], currentLineIndex: number) => {
+                for (const nodePart of nodes) {
+                  // 提取节点ID（可能带标签定义）
+                  const idMatch = nodePart.match(/^(\w+)/)
+                  if (!idMatch) continue
+                  const nid = idMatch[1]
+                  if (nid === nodeId) continue // 跳过被删除的节点
+
+                  const defs = nodeDefinitions.get(nid)
+                  if (defs && defs.length === 1 && defs[0].lineIndex === currentLineIndex) {
+                    // 这个节点只在当前行有定义，需要保留
+                    orphanedDefinitions.push(`    ${defs[0].definition}`)
+                  }
+                }
+              }
+
+              // 检查左右两边被移除的节点
+              const removedLeft = leftNodes.filter(n => new RegExp(`^${nodeId}(?:[\\[\\(\\{/<]|$)`).test(n) || n === nodeId)
+              const removedRight = rightNodes.filter(n => new RegExp(`^${nodeId}(?:[\\[\\(\\{/<]|$)`).test(n) || n === nodeId)
+
+              // 如果整行要被删除，检查所有对端节点
+              if (newLeftNodes.length === 0 || newRightNodes.length === 0) {
+                if (removedLeft.length > 0) checkOrphanedNodes(rightNodes, i)
+                if (removedRight.length > 0) checkOrphanedNodes(leftNodes, i)
+              }
+
               if (newLeftNodes.length > 0 && newRightNodes.length > 0) {
                 const newLine = `${indent}${newLeftNodes.join(' & ')} ${arrow}${labelStr} ${newRightNodes.join(' & ')}`
                 processedLines.push(newLine)
               }
-              // 否则删除整行
               continue
             }
           }
 
-          // 不包含该节点的行，保留
           processedLines.push(line)
         }
 
+        // 在 flowchart 声明后插入孤立节点的定义
+        if (orphanedDefinitions.length > 0) {
+          const headerIndex = processedLines.findIndex(l => l.trim().startsWith('flowchart') || l.trim().startsWith('graph'))
+          if (headerIndex >= 0) {
+            processedLines.splice(headerIndex + 1, 0, ...orphanedDefinitions)
+          }
+        }
+
         const newCode = processedLines.join('\n')
-        // 保存历史
         const newHistory = state.history.slice(0, state.historyIndex + 1)
         newHistory.push(newCode)
         if (newHistory.length > MAX_HISTORY) {
