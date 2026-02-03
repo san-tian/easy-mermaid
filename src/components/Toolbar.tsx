@@ -90,7 +90,7 @@ export function Toolbar() {
   }
 
   const handleExportPdf = async () => {
-    const svgElement = document.querySelector('.preview-container svg') as SVGSVGElement
+    const svgElement = document.querySelector('.preview-container svg') as HTMLElement
     if (!svgElement) return
 
     try {
