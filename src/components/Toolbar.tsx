@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { toPng, toSvg } from 'html-to-image'
+import { jsPDF } from 'jspdf'
 import { useEditorStore, DEFAULT_CODE, type FlowDirection } from '../store/editorStore'
 
 const TEMPLATES = {
@@ -46,9 +47,22 @@ const DIRECTIONS: { value: FlowDirection; label: string; icon: string }[] = [
 export function Toolbar() {
   const { code, setCode, getDirection, changeDirection, getNextNodeId } = useEditorStore()
   const [copied, setCopied] = useState(false)
+  const [showPngMenu, setShowPngMenu] = useState(false)
+  const pngMenuRef = useRef<HTMLDivElement>(null)
 
   const currentDirection = getDirection()
   const isFlowchart = code.trim().startsWith('flowchart')
+
+  // 点击外部关闭菜单
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (pngMenuRef.current && !pngMenuRef.current.contains(e.target as Node)) {
+        setShowPngMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   const handleCopyCode = async () => {
     await navigator.clipboard.writeText(code)
@@ -56,21 +70,67 @@ export function Toolbar() {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const handleExportPng = async () => {
+  const handleExportPng = async (pixelRatio: number) => {
     const svgElement = document.querySelector('.preview-container svg') as HTMLElement
     if (!svgElement) return
 
     try {
       const dataUrl = await toPng(svgElement, {
         backgroundColor: '#ffffff',
-        pixelRatio: 2,
+        pixelRatio,
       })
       const link = document.createElement('a')
-      link.download = 'mermaid-diagram.png'
+      link.download = `mermaid-diagram-${pixelRatio}x.png`
       link.href = dataUrl
       link.click()
+      setShowPngMenu(false)
     } catch (err) {
       console.error('Export PNG failed:', err)
+    }
+  }
+
+  const handleExportPdf = async () => {
+    const svgElement = document.querySelector('.preview-container svg') as SVGSVGElement
+    if (!svgElement) return
+
+    try {
+      const dataUrl = await toPng(svgElement, {
+        backgroundColor: '#ffffff',
+        pixelRatio: 3,
+      })
+
+      const img = new Image()
+      img.src = dataUrl
+      await new Promise((resolve) => (img.onload = resolve))
+
+      const imgWidth = img.width
+      const imgHeight = img.height
+
+      // 根据图片比例决定PDF方向
+      const isLandscape = imgWidth > imgHeight
+      const pdf = new jsPDF({
+        orientation: isLandscape ? 'landscape' : 'portrait',
+        unit: 'pt',
+      })
+
+      const pageWidth = pdf.internal.pageSize.getWidth()
+      const pageHeight = pdf.internal.pageSize.getHeight()
+      const margin = 40
+
+      // 计算缩放比例，使图片适应页面
+      const maxWidth = pageWidth - margin * 2
+      const maxHeight = pageHeight - margin * 2
+      const scale = Math.min(maxWidth / imgWidth, maxHeight / imgHeight)
+
+      const finalWidth = imgWidth * scale
+      const finalHeight = imgHeight * scale
+      const x = (pageWidth - finalWidth) / 2
+      const y = (pageHeight - finalHeight) / 2
+
+      pdf.addImage(dataUrl, 'PNG', x, y, finalWidth, finalHeight)
+      pdf.save('mermaid-diagram.pdf')
+    } catch (err) {
+      console.error('Export PDF failed:', err)
     }
   }
 
@@ -194,11 +254,39 @@ export function Toolbar() {
         </button>
 
         {/* 导出 PNG */}
+        <div ref={pngMenuRef} className="relative">
+          <button
+            onClick={() => setShowPngMenu((v) => !v)}
+            className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+          >
+            导出 PNG ▾
+          </button>
+          {showPngMenu && (
+            <div className="absolute right-0 top-full mt-1 z-20 w-36 rounded-md border border-gray-200 bg-white py-1 shadow-lg">
+              {[
+                { ratio: 1, label: '1x 标准' },
+                { ratio: 2, label: '2x 清晰' },
+                { ratio: 3, label: '3x 高清' },
+                { ratio: 4, label: '4x 超清' },
+              ].map(({ ratio, label }) => (
+                <button
+                  key={ratio}
+                  onClick={() => handleExportPng(ratio)}
+                  className="block w-full px-4 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-100"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* 导出 PDF */}
         <button
-          onClick={handleExportPng}
+          onClick={handleExportPdf}
           className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
         >
-          导出 PNG
+          导出 PDF
         </button>
 
         {/* 导出 SVG */}
