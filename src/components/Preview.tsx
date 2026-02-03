@@ -13,6 +13,7 @@ export function Preview() {
 
   // 缩放状态
   const [scale, setScale] = useState(1)
+  const [svgSize, setSvgSize] = useState<{ width: number; height: number } | null>(null)
   const MIN_SCALE = 0.25
   const MAX_SCALE = 3
 
@@ -124,6 +125,12 @@ export function Preview() {
         if (svgElement) {
           svgElement.style.maxWidth = 'none'
           svgElement.style.height = 'auto'
+
+          // 获取 SVG 实际尺寸用于缩放滚动区域计算
+          const bbox = svgElement.getBBox()
+          const width = bbox.width + bbox.x * 2 + 40 // 加上边距
+          const height = bbox.height + bbox.y * 2 + 40
+          setSvgSize({ width, height })
 
           const nodes = svgElement.querySelectorAll('.node')
           nodes.forEach((node) => {
@@ -264,11 +271,19 @@ export function Preview() {
           </div>
         ) : (
           <div
-            ref={containerRef}
-            className="flex min-h-full items-center justify-center origin-center transition-transform duration-100"
-            style={{ transform: `scale(${scale})` }}
-            onClick={handleContainerClick}
-          />
+            className="inline-block"
+            style={{
+              minWidth: svgSize ? svgSize.width * scale : 'auto',
+              minHeight: svgSize ? svgSize.height * scale : 'auto',
+            }}
+          >
+            <div
+              ref={containerRef}
+              className="origin-top-left transition-transform duration-100"
+              style={{ transform: `scale(${scale})` }}
+              onClick={handleContainerClick}
+            />
+          </div>
         )}
       </div>
 

@@ -61,7 +61,10 @@ export function Toolbar() {
     if (!svgElement) return
 
     try {
-      const dataUrl = await toPng(svgElement, { backgroundColor: '#ffffff' })
+      const dataUrl = await toPng(svgElement, {
+        backgroundColor: '#ffffff',
+        pixelRatio: 2,
+      })
       const link = document.createElement('a')
       link.download = 'mermaid-diagram.png'
       link.href = dataUrl
