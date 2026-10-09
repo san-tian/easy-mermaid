@@ -3,19 +3,22 @@ import mermaid from 'mermaid'
 let initialized = false
 
 /**
- * 去掉连线标签（edge label）的底色。
- * Mermaid 默认会给 .edgeLabel / .labelBkg 加一层背景色来遮住连线，
- * 这里覆写为透明，让连线文字直接贴在连线上。
+ * 连线标签（edge label）遮罩色。
+ * Mermaid 默认给 .edgeLabel / .labelBkg 一层半透明灰底
+ * （rgba(232,232,232,.8) / rgba(232,232,232,.5)），看起来像一块灰盒子。
+ * 这里换成与画布同色的实心白底：连线被遮住留出空白，
+ * 但不会从文字中间穿过，也看不到任何底色。
  */
-const EDGE_LABEL_TRANSPARENT_CSS = `
+const EDGE_LABEL_MASK_CSS = `
   .edgeLabel,
   .edgeLabel p,
-  .edgeLabel rect,
   .labelBkg {
-    background-color: transparent;
+    background-color: #ffffff;
   }
   .edgeLabel rect {
-    fill: transparent;
+    background-color: #ffffff;
+    fill: #ffffff;
+    opacity: 1;
   }
 `
 
@@ -26,7 +29,7 @@ export function initMermaid() {
     startOnLoad: false,
     theme: 'default',
     securityLevel: 'loose',
-    themeCSS: EDGE_LABEL_TRANSPARENT_CSS,
+    themeCSS: EDGE_LABEL_MASK_CSS,
     flowchart: {
       useMaxWidth: true,
       htmlLabels: true,

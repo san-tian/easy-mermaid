@@ -318,7 +318,7 @@ export function Preview() {
   }
 
   return (
-    <div className="relative h-full w-full overflow-hidden bg-gray-50">
+    <div className="relative h-full w-full overflow-hidden bg-white">
       {/* 缩放控制条 */}
       <div className="absolute top-2 right-2 z-10 flex items-center gap-1 rounded-lg bg-white/90 px-2 py-1 shadow-sm border border-gray-200">
         <button
